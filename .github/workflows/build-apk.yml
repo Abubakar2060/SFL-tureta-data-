@@ -1,4 +1,3 @@
-
 name: Build SFL TURETA DATA APK
 
 on:
@@ -33,20 +32,48 @@ jobs:
       - name: Find Android project
         id: android
         run: |
-          ANDROID_DIR=$(dirname "$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)")
+          SETTINGS_FILE=$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "No settings.gradle or settings.gradle.kts found"
+            exit 1
+          fi
+
+          ANDROID_DIR=$(dirname "$SETTINGS_FILE")
+
           echo "Android project: $ANDROID_DIR"
           echo "dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Configure Java and Kotlin 17
+      - name: Find app Gradle file
+        id: app
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          APP_GRADLE=$(find . -type f \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -n 1)
 
-          p = Path("app/build.gradle")
+          if [ -z "$APP_GRADLE" ]; then
+            echo "No app Gradle file found"
+            echo "Available Gradle files:"
+            find . -type f \( -name "build.gradle" -o -name "build.gradle.kts" \)
+            exit 1
+          fi
+
+          echo "App Gradle file: $APP_GRADLE"
+          echo "file=$APP_GRADLE" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Java 17
+        working-directory: ${{ steps.android.outputs.dir }}
+        run: |
+          APP_GRADLE="${{ steps.app.outputs.file }}"
+
+          python3 - "$APP_GRADLE" <<'PY'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
           s = p.read_text()
 
-          s += r'''
+          if p.name == "build.gradle":
+              s += """
 
           android {
               compileOptions {
@@ -60,9 +87,20 @@ jobs:
                   jvmTarget = "17"
               }
           }
-          '''
+          """
+          else:
+              s += """
+
+          android {
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          """
 
           p.write_text(s)
+          print("Configured:", p)
           PY
 
       - name: Build Debug APK
@@ -74,4 +112,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SFL-TURETA-DATA-debug-APK
-          path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.ap
+          path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
