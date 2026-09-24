@@ -113,3 +113,8 @@ jobs:
         with:
           name: SFL-TURETA-DATA-debug-APK
           path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+      - name: Show MainActivity problem
+        run: |
+          FILE=$(find extracted -type f -name "MainActivity.kt" | head -n 1)
+          echo "=== MainActivity.kt ==="
+          sed -n '100,140p' "$FILE"
