@@ -37,8 +37,7 @@ jobs:
           echo "Android project: $ANDROID_DIR"
           echo "dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
 
-      
-              - name: Fix Java and Kotlin JVM target
+      - name: Configure Java and Kotlin 17
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
           python3 - <<'PY'
@@ -47,7 +46,7 @@ jobs:
           p = Path("app/build.gradle")
           s = p.read_text()
 
-          s += """
+          s += r'''
 
           android {
               compileOptions {
@@ -61,16 +60,18 @@ jobs:
                   jvmTarget = "17"
               }
           }
-          """
+          '''
 
           p.write_text(s)
           PY
-        
-          
-        
+
+      - name: Build Debug APK
+        working-directory: ${{ steps.android.outputs.dir }}
+        run: |
+          gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SFL-TURETA-DATA-debug-APK
-          path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.ap
