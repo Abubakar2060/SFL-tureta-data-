@@ -14,41 +14,72 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract ZIP
+      - name: Find and Extract ZIP
         run: |
-          unzip -q SFL_TURETA_DATA_APP_V11_Production_Security.zip -d extracted
+          ZIP=$(find . -maxdepth 2 -name "*.zip" | head -1)
 
-      - name: Repair MainActivity
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: ZIP file not found"
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP"
+          unzip -q "$ZIP" -d extracted
+
+      - name: Repair MainActivity Kotlin
         run: |
           FILE=$(find extracted -name MainActivity.kt | head -1)
-          echo "FILE=$FILE"
+
+          if [ -z "$FILE" ]; then
+            echo "ERROR: MainActivity.kt not found"
+            exit 1
+          fi
+
+          echo "Repairing: $FILE"
 
           python3 - "$FILE" <<'PY'
           from pathlib import Path
           import sys
+          import re
 
           p = Path(sys.argv[1])
-          s = p.read_text()
+          lines = p.read_text().splitlines()
 
-          s = s.replace(
-              'Card(Modifier.weight(1f).clickable{onClick()})',
-              'Card(modifier.clickable{onClick()})'
-          )
+          fixed = []
 
-          s = s.replace(
-              'Modifier.weight(1f).clickable',
-              'modifier.clickable'
-          )
+          for line in lines:
 
-          s = s.replace(
-              'weight(1f)',
-              'weight(1f)'
-          )
+              # Fix broken Password OutlinedTextField
+              if "OutlinedTextField(password," in line:
+                  fixed.append(
+                      '        OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())'
+                  )
+                  continue
 
-          p.write_text(s)
+              # Fix accidental lowercase modifier
+              line = line.replace("modifier.clickable", "Modifier.clickable")
 
-          print("Weight fix applied")
+              # Fix illegal weight usage inside Quick/ServiceCard
+              line = re.sub(
+                  r'Modifier\.weight\(1f\)\.clickable\s*\{\s*onClick\(\)\s*\}',
+                  'Modifier.clickable { onClick() }',
+                  line
+              )
+
+              fixed.append(line)
+
+          p.write_text("\n".join(fixed) + "\n")
+
+          print("MainActivity.kt repaired successfully")
           PY
+
+      - name: Show repaired lines
+        run: |
+          FILE=$(find extracted -name MainActivity.kt | head -1)
+
+          echo "===== MainActivity.kt relevant lines ====="
+          nl -ba "$FILE" | sed -n '100,145p'
+          echo "=========================================="
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -61,7 +92,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Find Android project
+      - name: Find Android Project
         id: android
         run: |
           SETTINGS=$(find extracted \( -name settings.gradle -o -name settings.gradle.kts \) | head -1)
@@ -72,6 +103,8 @@ jobs:
           fi
 
           DIR=$(dirname "$SETTINGS")
+
+          echo "Android project: $DIR"
           echo "dir=$DIR" >> "$GITHUB_OUTPUT"
 
       - name: Find App Gradle
@@ -81,10 +114,11 @@ jobs:
           FILE=$(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -1)
 
           if [ -z "$FILE" ]; then
-            echo "ERROR: app Gradle not found"
+            echo "ERROR: app Gradle file not found"
             exit 1
           fi
 
+          echo "Gradle file: $FILE"
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       - name: Configure Java 17
@@ -100,6 +134,7 @@ jobs:
           s = p.read_text()
 
           if p.suffix == ".kts":
+
               if "jvmToolchain(17)" not in s:
                   s += """
 
@@ -122,7 +157,7 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Build APK
+      - name: Build Debug APK
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
           gradle assembleDebug --no-daemon
