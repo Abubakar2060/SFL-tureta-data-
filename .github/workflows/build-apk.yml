@@ -37,6 +37,8 @@ jobs:
             exit 1
           fi
 
+          echo "Using ZIP: $ZIP"
+
           rm -rf extracted
           mkdir extracted
           unzip -q "$ZIP" -d extracted
@@ -44,7 +46,7 @@ jobs:
           SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle not found"
+            echo "ERROR: settings.gradle(.kts) not found"
             exit 1
           fi
 
@@ -52,7 +54,7 @@ jobs:
 
           echo "PROJECT: $PROJECT_DIR"
 
-      - name: Fix MainActivity Kotlin errors
+      - name: Fix Android Kotlin source
         shell: bash
         run: |
           set -e
@@ -74,27 +76,129 @@ jobs:
           from pathlib import Path
 
           p = Path(sys.argv[1])
-          lines = p.read_text().splitlines()
+          text = p.read_text()
 
+          # Ensure delegated-state imports exist.
+          if "import androidx.compose.runtime.getValue" not in text:
+              text = text.replace(
+                  "import androidx.compose.runtime.*",
+                  "import androidx.compose.runtime.*\nimport androidx.compose.runtime.getValue\nimport androidx.compose.runtime.setValue"
+              )
+
+          # If wildcard runtime import is not used, add imports after package line.
+          if "import androidx.compose.runtime.getValue" not in text:
+              lines = text.splitlines()
+              package_index = -1
+              for i, line in enumerate(lines):
+                  if line.startswith("package "):
+                      package_index = i
+                      break
+
+              if package_index >= 0:
+                  lines.insert(package_index + 1, "import androidx.compose.runtime.getValue")
+                  lines.insert(package_index + 2, "import androidx.compose.runtime.setValue")
+                  text = "\n".join(lines) + "\n"
+
+          lines = text.splitlines()
+
+          # Locate LoginScreen and ensure password state exists inside it.
+          login_index = None
+          brace_index = None
+
+          for i, line in enumerate(lines):
+              if "fun LoginScreen" in line:
+                  login_index = i
+                  break
+
+          if login_index is not None:
+              depth = 0
+              found_open = False
+
+              for i in range(login_index, len(lines)):
+                  depth += lines[i].count("{")
+                  if "{" in lines[i]:
+                      found_open = True
+
+                  if found_open and i > login_index:
+                      if depth > 0:
+                          # Insert after the first opening brace.
+                          if not any("var password by remember" in x for x in lines[login_index:i+1]):
+                              lines.insert(
+                                  i + 1,
+                                  '    var password by remember { mutableStateOf("") }'
+                              )
+                          break
+
+          # Replace malformed password OutlinedTextField lines.
           fixed = []
 
           for line in lines:
+              stripped = line.strip()
+
               if "OutlinedTextField" in line and "password" in line:
+                  indent = line[:len(line) - len(line.lstrip())]
                   fixed.append(
-                      '    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
+                      indent +
+                      'OutlinedTextField('
+                      'value = password, '
+                      'onValueChange = { password = it }, '
+                      'label = { Text("Password") }, '
+                      'modifier = Modifier.fillMaxWidth()'
+                      ')'
                   )
-              elif "weight(1f)" in line:
-                  fixed.append(line.replace(".weight(1f)", ""))
               else:
                   fixed.append(line)
 
           p.write_text("\n".join(fixed) + "\n")
 
-          print("MainActivity.kt patched successfully.")
+          print("MainActivity.kt password section patched.")
           PY
 
-          echo "===== PASSWORD LINES ====="
+          echo "===== PASSWORD REFERENCES ====="
           grep -n "password" "$MAIN" || true
+
+      - name: Fix Gradle JVM target
+        shell: bash
+        run: |
+          set -e
+
+          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          APP_GRADLE=$(find "$PROJECT_DIR" -type f -name "build.gradle.kts" | grep "/app/" | head -n 1)
+
+          if [ -z "$APP_GRADLE" ]; then
+            echo "ERROR: app/build.gradle.kts not found"
+            exit 1
+          fi
+
+          echo "App Gradle file: $APP_GRADLE"
+
+          python3 - "$APP_GRADLE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          p = Path(sys.argv[1])
+          text = p.read_text()
+
+          if "kotlinOptions" not in text and "compilerOptions" not in text:
+              text += '''
+
+          android {
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+
+          kotlin {
+              jvmToolchain(17)
+          }
+          '''
+
+          p.write_text(text)
+          print("Gradle JVM configuration patched.")
+          PY
 
       - name: Build APK
         shell: bash
@@ -113,7 +217,6 @@ jobs:
           ./gradlew \
             --no-daemon \
             -Dorg.gradle.jvmargs="-Xmx3g" \
-            -Pkotlin.jvm.target.validation.mode=warning \
             assembleDebug
 
       - name: Find APK
