@@ -81,19 +81,41 @@ jobs:
               'OutlinedTextField(password,{***"Password")},modifier=Modifier.fillMaxWidth())',
               'OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
           )
-
-          # Remove invalid weight modifiers from standalone cards
-          text = text.replace('.weight(1f)', '')
-
-          p.write_text(text)
-
-          print("MainActivity.kt patched.")
-          PY
-
-      - name: Build APK
+      - name: Fix MainActivity Kotlin errors
         shell: bash
         run: |
           set -e
+
+          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          MAIN=$(find "$PROJECT_DIR" -type f -name "MainActivity.kt" | head -n 1)
+
+          echo "MainActivity: $MAIN"
+
+          python3 - "$MAIN" <<'PY'
+          import sys
+          from pathlib import Path
+
+          p = Path(sys.argv[1])
+          lines = p.read_text().splitlines()
+
+          for i, line in enumerate(lines):
+              if "OutlinedTextField" in line and "password" in line:
+                  lines[i] = '    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
+
+          for i, line in enumerate(lines):
+              if "weight(1f)" in line:
+                  lines[i] = line.replace(".weight(1f)", "")
+
+          p.write_text("\n".join(lines) + "\n")
+
+          print("MainActivity.kt patched successfully.")
+          PY
+
+          echo "===== PASSWORD LINES ====="
+          grep -n "password" "$MAIN" || true
+        
 
           SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
           PROJECT_DIR=$(dirname "$SETTINGS")
