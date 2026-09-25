@@ -1,4 +1,4 @@
-name: Inspect SFL TURETA DATA Gradle
+name: Show SFL Gradle Config
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -20,56 +20,36 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Extract project
+      - name: Extract and show Gradle
         shell: bash
         run: |
           set -e
 
           ZIP=$(find . -type f -name "*.zip" | head -n 1)
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: No ZIP file found"
-            exit 1
-          fi
-
-          echo "ZIP found: $ZIP"
+          echo "ZIP: $ZIP"
 
           rm -rf extracted
           mkdir extracted
-
           unzip -q "$ZIP" -d extracted
 
-          echo "Searching for Android project..."
-
-          SETTINGS=$(find extracted -type f -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1)
-
-          if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle or settings.gradle.kts not found"
-            find extracted -maxdepth 5 -type f | head -n 100
-            exit 1
-          fi
+          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "PROJECT_DIR=$PROJECT_DIR"
+          APP_GRADLE=$(find "$PROJECT_DIR" -type f \( -path "*/app/build.gradle.kts" -o -path "*/app/build.gradle" \) | head -n 1)
 
-          echo "===== SETTINGS FILE ====="
-          cat "$SETTINGS"
+          echo "PROJECT: $PROJECT_DIR"
+          echo "GRADLE: $APP_GRADLE"
 
-          echo "===== APP GRADLE FILE ====="
-
-          APP_GRADLE=$(find "$PROJECT_DIR" -type f -path "*/app/build.gradle.kts" -o -path "*/app/build.gradle" | head -n 1)
-
-          if [ -z "$APP_GRADLE" ]; then
-            echo "ERROR: app/build.gradle.kts or app/build.gradle not found"
-            find "$PROJECT_DIR" -type f | head -n 150
-            exit 1
-          fi
-
-          echo "Gradle file: $APP_GRADLE"
-          echo "--------------------------------"
+          echo "===== APP GRADLE ====="
           cat "$APP_GRADLE"
-          echo "--------------------------------"
+          echo "===== END ====="
 
-          echo "===== PROJECT FILES ====="
-          find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -n 200
+          {
+            echo "# SFL TURETA DATA Gradle Configuration"
+            echo
+            echo '```'
+            cat "$APP_GRADLE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
