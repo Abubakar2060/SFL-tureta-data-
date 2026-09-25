@@ -1,138 +1,3 @@
-name: Build SFL TURETA DATA APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Extract app ZIP
-        run: |
-          unzip -q SFL_TURETA_DATA_APP_V11_Production_Security.zip -d extracted
-
-      - name: Patch MainActivity
-        run: |
-          FILE=$(find extracted -type f -name "MainActivity.kt" | head -n 1)
-
-          if [ -z "$FILE" ]; then
-            echo "MainActivity.kt not found"
-            exit 1
-          fi
-
-          echo "Patching: $FILE"
-
-          python3 - "$FILE" <<'PY'
-          from pathlib import Path
-          import re
-          import sys
-
-          p = Path(sys.argv[1])
-          s = p.read_text()
-
-          # Fix Password TextField
-          pattern = r'OutlinedTextField\(password,\{.*?\},modifier=Modifier\.fillMaxWidth\(\)\)'
-          replacement = 'OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())'
-
-          s, count = re.subn(pattern, replacement, s, count=1)
-
-          if count == 0:
-              raise SystemExit("Password TextField pattern not found")
-
-          # Fix Quick composable
-          old = '@Composable fun Quick(icon:String,title:String,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})'
-          new = '@Composable fun Quick(icon:String,title:String,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})'
-
-          if old not in s:
-              raise SystemExit("Quick composable pattern not found")
-
-          s = s.replace(old, new, 1)
-
-          # Fix ServiceCard composable
-          old = '@Composable fun ServiceCard(s:Service,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})'
-          new = '@Composable fun ServiceCard(s:Service,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})'
-
-          if old not in s:
-              raise SystemExit("ServiceCard composable pattern not found")
-
-          s = s.replace(old, new, 1)
-
-          # Fix Quick calls
-          for icon, title in [
-              ("📱", "Data"),
-              ("💳", "Airtime"),
-              ("💡", "Bills"),
-              ("🎓", "Education"),
-          ]:
-              old = f'Quick("{icon}","{title}",onServices)'
-              new = f'Quick("{icon}","{title}",onServices,Modifier.weight(1f))'
-
-              if old not in s:
-                  raise SystemExit(f"Quick call not found: {title}")
-
-              s = s.replace(old, new, 1)
-
-          # Fix ServiceCard calls
-          old = 'ServiceCard(s,onServices)'
-          new = 'ServiceCard(s,onServices,Modifier.weight(1f))'
-
-          if old not in s:
-              raise SystemExit("ServiceCard call not found")
-
-          s = s.replace(old, new)
-
-          p.write_text(s)
-
-          print("MainActivity.kt patched successfully")
-          PY
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Find Android project
-        id: android
-        run: |
-          SETTINGS_FILE=$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "No settings.gradle found"
-            exit 1
-          fi
-
-          ANDROID_DIR=$(dirname "$SETTINGS_FILE")
-
-          echo "Android project: $ANDROID_DIR"
-          echo "dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Find app Gradle file
-        id: app
-        working-directory: ${{ steps.android.outputs.dir }}
-        run: |
-          APP_GRADLE=$(find . -type f \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -n 1)
-
-          if [ -z "$APP_GRADLE" ]; then
-            echo "No app Gradle file found"
-            exit 1
-          fi
-
-          echo "App Gradle file: $APP_GRADLE"
-          echo "file=$APP_GRADLE" >> "$GITHUB_OUTPUT"
-
       - name: Configure Java 17
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
@@ -145,14 +10,11 @@ jobs:
           p = Path(sys.argv[1])
           s = p.read_text()
 
-          if p.name == "build.gradle":
-              s += """
+          s += """
 
-          android {
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
+          tasks.withType(JavaCompile).configureEach {
+              sourceCompatibility = "17"
+              targetCompatibility = "17"
           }
 
           tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
@@ -164,7 +26,7 @@ jobs:
 
           p.write_text(s)
 
-          print("Java 17 configuration added")
+          print("Java and Kotlin JVM target set to 17")
           PY
 
       - name: Build Debug APK
