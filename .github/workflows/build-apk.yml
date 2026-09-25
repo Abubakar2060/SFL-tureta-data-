@@ -14,8 +14,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find and Extract ZIP
+      - name: Extract Project
         run: |
+          mkdir -p extracted
+
           ZIP=$(find . -maxdepth 2 -name "*.zip" | head -1)
 
           if [ -z "$ZIP" ]; then
@@ -23,10 +25,10 @@ jobs:
             exit 1
           fi
 
-          echo "Using ZIP: $ZIP"
+          echo "ZIP found: $ZIP"
           unzip -q "$ZIP" -d extracted
 
-      - name: Repair MainActivity Kotlin
+      - name: Repair MainActivity
         run: |
           FILE=$(find extracted -name MainActivity.kt | head -1)
 
@@ -35,7 +37,8 @@ jobs:
             exit 1
           fi
 
-          echo "Repairing: $FILE"
+          echo "Found MainActivity:"
+          echo "$FILE"
 
           python3 - "$FILE" <<'PY'
           from pathlib import Path
@@ -43,43 +46,50 @@ jobs:
           import re
 
           p = Path(sys.argv[1])
-          lines = p.read_text().splitlines()
+          s = p.read_text()
 
-          fixed = []
+          # ------------------------------------------------
+          # FIX 1: Broken Password field
+          # ------------------------------------------------
 
-          for line in lines:
+          s = re.sub(
+              r'OutlinedTextField\(password,.*?\)',
+              'OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())',
+              s,
+              count=1
+          )
 
-              # Fix broken Password OutlinedTextField
-              if "OutlinedTextField(password," in line:
-                  fixed.append(
-                      '        OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())'
-                  )
-                  continue
+          # ------------------------------------------------
+          # FIX 2: Remove illegal weight() from Quick/Card
+          # ------------------------------------------------
 
-              # Fix accidental lowercase modifier
-              line = line.replace("modifier.clickable", "Modifier.clickable")
+          s = re.sub(
+              r'Modifier\.weight\(1f\)\.clickable\s*\{\s*onClick\(\)\s*\}',
+              'Modifier.clickable { onClick() }',
+              s
+          )
 
-              # Fix illegal weight usage inside Quick/ServiceCard
-              line = re.sub(
-                  r'Modifier\.weight\(1f\)\.clickable\s*\{\s*onClick\(\)\s*\}',
-                  'Modifier.clickable { onClick() }',
-                  line
-              )
+          # ------------------------------------------------
+          # FIX 3: Remove accidental lowercase modifier
+          # ------------------------------------------------
 
-              fixed.append(line)
+          s = s.replace(
+              'modifier.clickable',
+              'Modifier.clickable'
+          )
 
-          p.write_text("\n".join(fixed) + "\n")
+          p.write_text(s)
 
-          print("MainActivity.kt repaired successfully")
+          print("MainActivity repair completed")
           PY
 
-      - name: Show repaired lines
+      - name: Verify Password Line
         run: |
           FILE=$(find extracted -name MainActivity.kt | head -1)
 
-          echo "===== MainActivity.kt relevant lines ====="
-          nl -ba "$FILE" | sed -n '100,145p'
-          echo "=========================================="
+          echo "===== Lines 100-140 ====="
+          nl -ba "$FILE" | sed -n '100,140p'
+          echo "=========================="
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -98,7 +108,7 @@ jobs:
           SETTINGS=$(find extracted \( -name settings.gradle -o -name settings.gradle.kts \) | head -1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: Android project not found"
+            echo "ERROR: settings.gradle not found"
             exit 1
           fi
 
@@ -114,7 +124,7 @@ jobs:
           FILE=$(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -1)
 
           if [ -z "$FILE" ]; then
-            echo "ERROR: app Gradle file not found"
+            echo "ERROR: app/build.gradle not found"
             exit 1
           fi
 
@@ -157,10 +167,10 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Build Debug APK
+      - name: Build APK
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
-          gradle assembleDebug --no-daemon
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
