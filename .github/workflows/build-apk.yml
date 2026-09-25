@@ -108,12 +108,131 @@ jobs:
         run: |
           gradle assembleDebug --no-daemon
 
+      name: Build SFL TURETA DATA APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract app ZIP
+        run: |
+          unzip -q SFL_TURETA_DATA_APP_V11_Production_Security.zip -d extracted
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Find Android project
+        id: android
+        run: |
+          SETTINGS_FILE=$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
+
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "No settings.gradle or settings.gradle.kts found"
+            exit 1
+          fi
+
+          ANDROID_DIR=$(dirname "$SETTINGS_FILE")
+
+          echo "Android project: $ANDROID_DIR"
+          echo "dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Find app Gradle file
+        id: app
+        working-directory: ${{ steps.android.outputs.dir }}
+        run: |
+          APP_GRADLE=$(find . -type f \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -n 1)
+
+          if [ -z "$APP_GRADLE" ]; then
+            echo "No app Gradle file found"
+            echo "Available Gradle files:"
+            find . -type f \( -name "build.gradle" -o -name "build.gradle.kts" \)
+            exit 1
+          fi
+
+          echo "App Gradle file: $APP_GRADLE"
+          echo "file=$APP_GRADLE" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Java 17
+        working-directory: ${{ steps.android.outputs.dir }}
+        run: |
+          APP_GRADLE="${{ steps.app.outputs.file }}"
+
+          python3 - "$APP_GRADLE" <<'PY'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text()
+
+          if p.name == "build.gradle":
+              s += """
+
+          android {
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+
+          tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+          """
+          else:
+              s += """
+
+          android {
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+          }
+          """
+
+          p.write_text(s)
+          print("Configured:", p)
+          PY
+
+      - name: Build Debug APK
+        working-directory: ${{ steps.android.outputs.dir }}
+        run: |
+          gradle assembleDebug --no-daemon
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SFL-TURETA-DATA-debug-APK
           path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
       - name: Show MainActivity problem
+        run: |
+          FILE=$(find extracted -type f -name "MainActivity.kt" | head -n 1)
+          echo "=== MainActivity.kt ==="
+          sed -n '100,140p' "$FILE"
+        
+    
+  
+    
+  
         run: |
           FILE=$(find extracted -type f -name "MainActivity.kt" | head -n 1)
           echo "=== MainActivity.kt ==="
