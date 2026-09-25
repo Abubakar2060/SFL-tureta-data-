@@ -1,12 +1,152 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SFL TURETA DATA</title>
-</head>
-<body>
-  <h1>SFL TURETA DATA</h1>
-  <p>Welcome to SFL TURETA DATA</p>
-</body>
-</html>
+name: Build SFL TURETA DATA APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract project
+        shell: bash
+        run: |
+          set -e
+
+          ZIP=$(find . -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: ZIP file not found"
+            exit 1
+          fi
+
+          rm -rf extracted
+          mkdir extracted
+          unzip -q "$ZIP" -d extracted
+
+          SETTINGS=$(find extracted -type f \( \
+            -name "settings.gradle.kts" -o \
+            -name "settings.gradle" \
+          \) | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          echo "Project: $PROJECT_DIR"
+
+          echo "===== BEFORE PATCH ====="
+          find "$PROJECT_DIR" -type f \
+            \( -name "build.gradle.kts" -o -name "build.gradle" \) \
+            -print
+
+      - name: Patch Compose compiler
+        shell: bash
+        run: |
+          set -e
+
+          SETTINGS=$(find extracted -type f \( \
+            -name "settings.gradle.kts" -o \
+            -name "settings.gradle" \
+          \) | head -n 1)
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          APP_GRADLE=$(find "$PROJECT_DIR" -type f \( \
+            -path "*/app/build.gradle.kts" -o \
+            -path "*/app/build.gradle" \
+          \) | head -n 1)
+
+          if [ -z "$APP_GRADLE" ]; then
+            echo "ERROR: app Gradle file not found"
+            exit 1
+          fi
+
+          echo "App Gradle: $APP_GRADLE"
+
+          python3 - "$APP_GRADLE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          p = Path(sys.argv[1])
+          s = p.read_text()
+
+          if "composeOptions" not in s:
+              s = s.replace(
+                  "compileSdk=36",
+                  """compileSdk=36
+           composeOptions {
+               kotlinCompilerExtensionVersion = "1.5.15"
+           }"""
+              )
+
+          s = s.replace(
+              "kotlinCompilerExtensionVersion=\"1.5.15\"",
+              "kotlinCompilerExtensionVersion = \"1.5.15\""
+          )
+
+          p.write_text(s)
+          print("Compose compiler configuration patched.")
+          PY
+
+          echo "===== PATCHED APP GRADLE ====="
+          cat "$APP_GRADLE"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
+
+          SETTINGS=$(find extracted -type f \( \
+            -name "settings.gradle.kts" -o \
+            -name "settings.gradle" \
+          \) | head -n 1)
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          cd "$PROJECT_DIR"
+
+          GRADLE_VERSION=8.9
+
+          gradle wrapper --gradle-version "$GRADLE_VERSION"
+
+          chmod +x gradlew
+
+          ./gradlew \
+            --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g" \
+            -Pkotlin.jvm.target.validation.mode=warning \
+            assembleDebug
+
+      - name: Find APK
+        shell: bash
+        run: |
+          echo "===== APK FILES ====="
+          find extracted -type f -name "*.apk" -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFL-TURETA-DATA-APK
+          path: extracted/**/*.apk
+          if-no-files-found: error
