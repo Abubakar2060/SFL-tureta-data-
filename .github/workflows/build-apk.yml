@@ -74,48 +74,32 @@ jobs:
           from pathlib import Path
 
           p = Path(sys.argv[1])
-          text = p.read_text()
-
-          # Fix malformed Password field
-          text = text.replace(
-              'OutlinedTextField(password,{***"Password")},modifier=Modifier.fillMaxWidth())',
-              'OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
-          )
-      - name: Fix MainActivity Kotlin errors
-        shell: bash
-        run: |
-          set -e
-
-          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
-          PROJECT_DIR=$(dirname "$SETTINGS")
-
-          MAIN=$(find "$PROJECT_DIR" -type f -name "MainActivity.kt" | head -n 1)
-
-          echo "MainActivity: $MAIN"
-
-          python3 - "$MAIN" <<'PY'
-          import sys
-          from pathlib import Path
-
-          p = Path(sys.argv[1])
           lines = p.read_text().splitlines()
 
-          for i, line in enumerate(lines):
+          fixed = []
+
+          for line in lines:
               if "OutlinedTextField" in line and "password" in line:
-                  lines[i] = '    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
+                  fixed.append(
+                      '    OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
+                  )
+              elif "weight(1f)" in line:
+                  fixed.append(line.replace(".weight(1f)", ""))
+              else:
+                  fixed.append(line)
 
-          for i, line in enumerate(lines):
-              if "weight(1f)" in line:
-                  lines[i] = line.replace(".weight(1f)", "")
-
-          p.write_text("\n".join(lines) + "\n")
+          p.write_text("\n".join(fixed) + "\n")
 
           print("MainActivity.kt patched successfully.")
           PY
 
           echo "===== PASSWORD LINES ====="
           grep -n "password" "$MAIN" || true
-        
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
 
           SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
           PROJECT_DIR=$(dirname "$SETTINGS")
