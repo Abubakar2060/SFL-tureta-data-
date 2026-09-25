@@ -18,7 +18,7 @@ jobs:
         run: |
           unzip -q SFL_TURETA_DATA_APP_V11_Production_Security.zip -d extracted
 
-      - name: Patch MainActivity
+      - name: Fix MainActivity
         run: |
           FILE=$(find extracted -type f -name "MainActivity.kt" | head -n 1)
 
@@ -30,18 +30,38 @@ jobs:
           p = Path(sys.argv[1])
           s = p.read_text()
 
-          pattern = r'OutlinedTextField\(password,\{.*?\},modifier=Modifier\.fillMaxWidth\(\)\)'
-          replacement = 'OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())'
+          # Fix broken password field
+          pattern = r'OutlinedTextField\(password,.*?Button\(onClick='
+          replacement = '''OutlinedTextField(
+              password,
+              { password = it },
+              label = { Text("Password") },
+              modifier = Modifier.fillMaxWidth()
+          )
+           Button(onClick='''
+
           s, count = re.subn(pattern, replacement, s, count=1)
 
-          old = '@Composable fun Quick(icon:String,title:String,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})'
-          new = '@Composable fun Quick(icon:String,title:String,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})'
-          s = s.replace(old, new, 1)
+          if count == 0:
+              print("Password field pattern not found")
+          else:
+              print("Password field fixed")
 
-          old = '@Composable fun ServiceCard(s:Service,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})'
-          new = '@Composable fun ServiceCard(s:Service,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})'
-          s = s.replace(old, new, 1)
+          # Fix Quick card
+          s = s.replace(
+              '@Composable fun Quick(icon:String,title:String,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})',
+              '@Composable fun Quick(icon:String,title:String,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})',
+              1
+          )
 
+          # Fix ServiceCard
+          s = s.replace(
+              '@Composable fun ServiceCard(s:Service,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})',
+              '@Composable fun ServiceCard(s:Service,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})',
+              1
+          )
+
+          # Add weight to Quick cards
           for icon, title in [
               ("📱", "Data"),
               ("💳", "Airtime"),
@@ -53,13 +73,14 @@ jobs:
                   f'Quick("{icon}","{title}",onServices,Modifier.weight(1f))'
               )
 
+          # Add weight to Service cards
           s = s.replace(
               'ServiceCard(s,onServices)',
               'ServiceCard(s,onServices,Modifier.weight(1f))'
           )
 
           p.write_text(s)
-          print("MainActivity fixed")
+          print("MainActivity patch completed")
           PY
 
       - name: Set up Java 17
@@ -76,9 +97,10 @@ jobs:
       - name: Find Android project
         id: android
         run: |
-          SETTINGS_FILE=$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
+          SETTINGS_FILE=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
           ANDROID_DIR=$(dirname "$SETTINGS_FILE")
           echo "dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
+          echo "Android project: $ANDROID_DIR"
 
       - name: Find app Gradle file
         id: app
@@ -86,8 +108,9 @@ jobs:
         run: |
           APP_GRADLE=$(find . -type f \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -n 1)
           echo "file=$APP_GRADLE" >> "$GITHUB_OUTPUT"
+          echo "Gradle file: $APP_GRADLE"
 
-      - name: Configure Android Java 17
+      - name: Configure Java and Kotlin 17
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
           APP_GRADLE="${{ steps.app.outputs.file }}"
