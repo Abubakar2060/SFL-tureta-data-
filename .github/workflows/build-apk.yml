@@ -37,8 +37,6 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP: $ZIP"
-
           rm -rf extracted
           mkdir extracted
           unzip -q "$ZIP" -d extracted
@@ -54,7 +52,7 @@ jobs:
 
           echo "PROJECT: $PROJECT_DIR"
 
-            - name: Fix MainActivity Kotlin errors
+      - name: Fix MainActivity Kotlin errors
         shell: bash
         run: |
           set -e
@@ -76,20 +74,23 @@ jobs:
           from pathlib import Path
 
           p = Path(sys.argv[1])
-          lines = p.read_text().splitlines()
+          text = p.read_text()
 
-          # Remove the invalid weight modifiers on the Quick/ServiceCard lines.
-          for i, line in enumerate(lines):
-              if "weight(1f)" in line and ("Quick(" in line or "ServiceCard(" in line):
-                  lines[i] = line.replace(".weight(1f)", "")
+          # Fix malformed Password field
+          text = text.replace(
+              'OutlinedTextField(password,{***"Password")},modifier=Modifier.fillMaxWidth())',
+              'OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())'
+          )
 
-          p.write_text("\n".join(lines) + "\n")
+          # Remove invalid weight modifiers from standalone cards
+          text = text.replace('.weight(1f)', '')
+
+          p.write_text(text)
 
           print("MainActivity.kt patched.")
           PY
 
-          echo "===== CHECKING WEIGHT ERRORS ====="
-          grep -n "weight(1f)" "$MAIN" || true
+      - name: Build APK
         shell: bash
         run: |
           set -e
