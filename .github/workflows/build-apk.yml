@@ -7,25 +7,35 @@ on:
       - main
 
 jobs:
-  inspect:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Extract and show Gradle
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract project
         shell: bash
         run: |
           set -e
 
           ZIP=$(find . -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: ZIP file not found"
+            exit 1
+          fi
 
           echo "ZIP: $ZIP"
 
@@ -35,21 +45,44 @@ jobs:
 
           SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
 
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found"
+            exit 1
+          fi
+
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          APP_GRADLE=$(find "$PROJECT_DIR" -type f \( -path "*/app/build.gradle.kts" -o -path "*/app/build.gradle" \) | head -n 1)
-
           echo "PROJECT: $PROJECT_DIR"
-          echo "GRADLE: $APP_GRADLE"
 
-          echo "===== APP GRADLE ====="
-          cat "$APP_GRADLE"
-          echo "===== END ====="
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
 
-          {
-            echo "# SFL TURETA DATA Gradle Configuration"
-            echo
-            echo '```'
-            cat "$APP_GRADLE"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          cd "$PROJECT_DIR"
+
+          gradle wrapper --gradle-version 8.9
+
+          chmod +x gradlew
+
+          ./gradlew \
+            --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g" \
+            -Pkotlin.jvm.target.validation.mode=warning \
+            assembleDebug
+
+      - name: Find APK
+        shell: bash
+        run: |
+          echo "===== APK FILES ====="
+          find extracted -type f -name "*.apk" -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFL-TURETA-DATA-APK
+          path: extracted/**/*.apk
+          if-no-files-found: error
