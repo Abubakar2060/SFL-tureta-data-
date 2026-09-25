@@ -1,4 +1,4 @@
-name: Show SFL Gradle Config
+name: Build SFL TURETA DATA APK
 
 on:
   workflow_dispatch:
