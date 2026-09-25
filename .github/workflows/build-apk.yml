@@ -54,7 +54,42 @@ jobs:
 
           echo "PROJECT: $PROJECT_DIR"
 
-      - name: Build APK
+            - name: Fix MainActivity Kotlin errors
+        shell: bash
+        run: |
+          set -e
+
+          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          MAIN=$(find "$PROJECT_DIR" -type f -name "MainActivity.kt" | head -n 1)
+
+          if [ -z "$MAIN" ]; then
+            echo "ERROR: MainActivity.kt not found"
+            exit 1
+          fi
+
+          echo "MainActivity: $MAIN"
+
+          python3 - "$MAIN" <<'PY'
+          import sys
+          from pathlib import Path
+
+          p = Path(sys.argv[1])
+          lines = p.read_text().splitlines()
+
+          # Remove the invalid weight modifiers on the Quick/ServiceCard lines.
+          for i, line in enumerate(lines):
+              if "weight(1f)" in line and ("Quick(" in line or "ServiceCard(" in line):
+                  lines[i] = line.replace(".weight(1f)", "")
+
+          p.write_text("\n".join(lines) + "\n")
+
+          print("MainActivity.kt patched.")
+          PY
+
+          echo "===== CHECKING WEIGHT ERRORS ====="
+          grep -n "weight(1f)" "$MAIN" || true
         shell: bash
         run: |
           set -e
