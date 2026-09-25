@@ -11,85 +11,90 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract app ZIP
+      - name: Extract ZIP
         run: |
           unzip -q SFL_TURETA_DATA_APP_V11_Production_Security.zip -d extracted
 
       - name: Fix MainActivity
         run: |
-          FILE=$(find extracted -type f -name "MainActivity.kt" | head -n 1)
+          FILE=$(find extracted -name MainActivity.kt | head -1)
 
           python3 - "$FILE" <<'PY'
           from pathlib import Path
-          import re
           import sys
+          import re
 
           p = Path(sys.argv[1])
           s = p.read_text()
 
-          # Fix broken password field
-          pattern = r'OutlinedTextField\(password,.*?Button\(onClick='
-          replacement = '''OutlinedTextField(
-              password,
-              { password = it },
-              label = { Text("Password") },
-              modifier = Modifier.fillMaxWidth()
-          )
-           Button(onClick='''
+          # Replace broken password field line
+          lines = s.splitlines()
 
-          s, count = re.subn(pattern, replacement, s, count=1)
+          for i, line in enumerate(lines):
+              if "OutlinedTextField(password" in line:
+                  lines[i] = '           OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())'
+                  print("Password line replaced")
+                  break
 
-          if count == 0:
-              print("Password field pattern not found")
-          else:
-              print("Password field fixed")
+          s = "\n".join(lines) + "\n"
 
-          # Fix Quick card
+          # Fix Quick composable
           s = s.replace(
-              '@Composable fun Quick(icon:String,title:String,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})',
-              '@Composable fun Quick(icon:String,title:String,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})',
-              1
+              'Card(Modifier.weight(1f).clickable{onClick()})',
+              'Card(modifier.clickable{onClick()})'
+          )
+
+          s = s.replace(
+              '@Composable fun Quick(icon:String,title:String,onClick:()->Unit)',
+              '@Composable fun Quick(icon:String,title:String,onClick:()->Unit,modifier:Modifier=Modifier)'
           )
 
           # Fix ServiceCard
           s = s.replace(
-              '@Composable fun ServiceCard(s:Service,onClick:()->Unit){Card(Modifier.weight(1f).clickable{onClick()})',
-              '@Composable fun ServiceCard(s:Service,onClick:()->Unit,modifier:Modifier=Modifier){Card(modifier.clickable{onClick()})',
-              1
+              '@Composable fun ServiceCard(s:Service,onClick:()->Unit)',
+              '@Composable fun ServiceCard(s:Service,onClick:()->Unit,modifier:Modifier=Modifier)'
           )
 
-          # Add weight to Quick cards
-          for icon, title in [
-              ("📱", "Data"),
-              ("💳", "Airtime"),
-              ("💡", "Bills"),
-              ("🎓", "Education"),
-          ]:
-              s = s.replace(
-                  f'Quick("{icon}","{title}",onServices)',
-                  f'Quick("{icon}","{title}",onServices,Modifier.weight(1f))'
-              )
+          # Add modifier weight to cards
+          s = s.replace(
+              'Quick("📱","Data",onServices)',
+              'Quick("📱","Data",onServices,Modifier.weight(1f))'
+          )
 
-          # Add weight to Service cards
+          s = s.replace(
+              'Quick("💳","Airtime",onServices)',
+              'Quick("💳","Airtime",onServices,Modifier.weight(1f))'
+          )
+
+          s = s.replace(
+              'Quick("💡","Bills",onServices)',
+              'Quick("💡","Bills",onServices,Modifier.weight(1f))'
+          )
+
+          s = s.replace(
+              'Quick("🎓","Education",onServices)',
+              'Quick("🎓","Education",onServices,Modifier.weight(1f))'
+          )
+
           s = s.replace(
               'ServiceCard(s,onServices)',
               'ServiceCard(s,onServices,Modifier.weight(1f))'
           )
 
           p.write_text(s)
-          print("MainActivity patch completed")
+          print("MainActivity fixed")
           PY
 
-      - name: Set up Java 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -97,25 +102,22 @@ jobs:
       - name: Find Android project
         id: android
         run: |
-          SETTINGS_FILE=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
-          ANDROID_DIR=$(dirname "$SETTINGS_FILE")
-          echo "dir=$ANDROID_DIR" >> "$GITHUB_OUTPUT"
-          echo "Android project: $ANDROID_DIR"
+          SETTINGS=$(find extracted -name settings.gradle -o -name settings.gradle.kts | head -1)
+          echo "dir=$(dirname "$SETTINGS")" >> "$GITHUB_OUTPUT"
 
-      - name: Find app Gradle file
+      - name: Find app Gradle
         id: app
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
-          APP_GRADLE=$(find . -type f \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -n 1)
-          echo "file=$APP_GRADLE" >> "$GITHUB_OUTPUT"
-          echo "Gradle file: $APP_GRADLE"
+          FILE=$(find . -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" | head -1)
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Configure Java and Kotlin 17
+      - name: Configure Java 17
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
-          APP_GRADLE="${{ steps.app.outputs.file }}"
+          FILE="${{ steps.app.outputs.file }}"
 
-          python3 - "$APP_GRADLE" <<'PY'
+          python3 - "$FILE" <<'PY'
           from pathlib import Path
           import sys
 
@@ -154,10 +156,9 @@ jobs:
           """
 
           p.write_text(s)
-          print("Java/Kotlin 17 configured")
           PY
 
-      - name: Build Debug APK
+      - name: Build APK
         working-directory: ${{ steps.android.outputs.dir }}
         run: |
           gradle assembleDebug --no-daemon
@@ -165,5 +166,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SFL-TURETA-DATA-debug-APK
+          name: SFL-TURETA-DATA-APK
           path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
