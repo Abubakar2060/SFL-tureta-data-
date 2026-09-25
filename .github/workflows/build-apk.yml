@@ -25,7 +25,7 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP found: $ZIP"
+          echo "ZIP: $ZIP"
           unzip -q "$ZIP" -d extracted
 
       - name: Repair MainActivity
@@ -37,8 +37,7 @@ jobs:
             exit 1
           fi
 
-          echo "Found MainActivity:"
-          echo "$FILE"
+          echo "MainActivity: $FILE"
 
           python3 - "$FILE" <<'PY'
           from pathlib import Path
@@ -48,30 +47,130 @@ jobs:
           p = Path(sys.argv[1])
           s = p.read_text()
 
-          # ------------------------------------------------
-          # FIX 1: Broken Password field
-          # ------------------------------------------------
+          # ==========================================
+          # Replace the ENTIRE broken LoginScreen
+          # ==========================================
+
+          login = r'''
+          @Composable
+          fun LoginScreen(
+              onLoggedIn: (String, String) -> Unit,
+              onRegister: () -> Unit,
+              onForgot: () -> Unit
+          ) {
+              var identifier by remember { mutableStateOf("") }
+              var password by remember { mutableStateOf("") }
+              var msg by remember { mutableStateOf("") }
+              val scope = rememberCoroutineScope()
+
+              Column(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .padding(24.dp),
+                  verticalArrangement = Arrangement.spacedBy(14.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                  Spacer(modifier = Modifier.height(30.dp))
+
+                  Text(
+                      "SFL TURETA DATA",
+                      style = MaterialTheme.typography.headlineMedium,
+                      fontWeight = FontWeight.Bold
+                  )
+
+                  Text("Data cikin sauƙi, a kowane lokaci.")
+
+                  OutlinedTextField(
+                      value = identifier,
+                      onValueChange = { identifier = it },
+                      label = { Text("Phone Number / Email") },
+                      modifier = Modifier.fillMaxWidth()
+                  )
+
+                  OutlinedTextField(
+                      value = password,
+                      onValueChange = { password = it },
+                      label = { Text("Password") },
+                      modifier = Modifier.fillMaxWidth()
+                  )
+
+                  Button(
+                      onClick = {
+                          scope.launch {
+                              ApiClient.post(
+                                  "/auth/login",
+                                  JSONObject().apply {
+                                      put("login", identifier)
+                                      put("password", password)
+                                  }.toString()
+                              ).onSuccess { response ->
+                                  val json = JSONObject(response)
+                                  val data = json.optJSONObject("data")
+
+                                  val token =
+                                      data?.optString("access_token").orEmpty()
+
+                                  val name =
+                                      data?.optJSONObject("user")
+                                          ?.optString("full_name")
+                                          .orEmpty()
+
+                                  onLoggedIn(token, name)
+                              }.onFailure {
+                                  msg = it.message ?: "Login failed"
+                              }
+                          }
+                      },
+                      modifier = Modifier.fillMaxWidth()
+                  ) {
+                      Text("Login")
+                  }
+
+                  TextButton(
+                      onClick = onForgot
+                  ) {
+                      Text("Forgot Password?")
+                  }
+
+                  OutlinedButton(
+                      onClick = onRegister,
+                      modifier = Modifier.fillMaxWidth()
+                  ) {
+                      Text("Create Account")
+                  }
+
+                  if (msg.isNotBlank()) {
+                      Text(msg)
+                  }
+              }
+          }
+          '''
+
+          # Match LoginScreen from its declaration
+          # until the next top-level @Composable declaration.
+          pattern = r'@Composable\s+fun\s+LoginScreen\b.*?(?=\n@Composable|\Z)'
+
+          if not re.search(pattern, s, flags=re.DOTALL):
+              print("ERROR: LoginScreen block was not found")
+              raise SystemExit(1)
 
           s = re.sub(
-              r'OutlinedTextField\(password,.*?\)',
-              'OutlinedTextField(password,{password=it},label={Text("Password")},modifier=Modifier.fillMaxWidth())',
+              pattern,
+              login.strip(),
               s,
-              count=1
+              count=1,
+              flags=re.DOTALL
           )
 
-          # ------------------------------------------------
-          # FIX 2: Remove illegal weight() from Quick/Card
-          # ------------------------------------------------
+          # ==========================================
+          # Fix illegal weight usage
+          # ==========================================
 
           s = re.sub(
               r'Modifier\.weight\(1f\)\.clickable\s*\{\s*onClick\(\)\s*\}',
               'Modifier.clickable { onClick() }',
               s
           )
-
-          # ------------------------------------------------
-          # FIX 3: Remove accidental lowercase modifier
-          # ------------------------------------------------
 
           s = s.replace(
               'modifier.clickable',
@@ -80,16 +179,17 @@ jobs:
 
           p.write_text(s)
 
-          print("MainActivity repair completed")
+          print("SUCCESS: LoginScreen replaced")
+          print("SUCCESS: weight usage repaired")
           PY
 
-      - name: Verify Password Line
+      - name: Verify MainActivity
         run: |
           FILE=$(find extracted -name MainActivity.kt | head -1)
 
-          echo "===== Lines 100-140 ====="
-          nl -ba "$FILE" | sed -n '100,140p'
-          echo "=========================="
+          echo "===== MainActivity lines 90-150 ====="
+          nl -ba "$FILE" | sed -n '90,150p'
+          echo "======================================"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -124,7 +224,7 @@ jobs:
           FILE=$(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -1)
 
           if [ -z "$FILE" ]; then
-            echo "ERROR: app/build.gradle not found"
+            echo "ERROR: app Gradle file not found"
             exit 1
           fi
 
