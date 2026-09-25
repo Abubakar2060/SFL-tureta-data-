@@ -1,1 +1,7 @@
+name: Build SFL TURETA DATA APK
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
