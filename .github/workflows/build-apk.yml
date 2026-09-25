@@ -1,4 +1,4 @@
-name: Build SFL TURETA DATA APK
+name: Inspect SFL TURETA DATA Gradle
 
 on:
   workflow_dispatch:
@@ -7,273 +7,69 @@ on:
       - main
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Project
-        run: |
-          mkdir -p extracted
-
-          ZIP=$(find . -maxdepth 2 -name "*.zip" | head -1)
-
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: ZIP file not found"
-            exit 1
-          fi
-
-          echo "ZIP: $ZIP"
-          unzip -q "$ZIP" -d extracted
-
-      - name: Repair MainActivity
-        run: |
-          FILE=$(find extracted -name MainActivity.kt | head -1)
-
-          if [ -z "$FILE" ]; then
-            echo "ERROR: MainActivity.kt not found"
-            exit 1
-          fi
-
-          echo "MainActivity: $FILE"
-
-          python3 - "$FILE" <<'PY'
-          from pathlib import Path
-          import sys
-          import re
-
-          p = Path(sys.argv[1])
-          s = p.read_text()
-
-          # ==========================================
-          # Replace the ENTIRE broken LoginScreen
-          # ==========================================
-
-          login = r'''
-          @Composable
-          fun LoginScreen(
-              onLoggedIn: (String, String) -> Unit,
-              onRegister: () -> Unit,
-              onForgot: () -> Unit
-          ) {
-              var identifier by remember { mutableStateOf("") }
-              var password by remember { mutableStateOf("") }
-              var msg by remember { mutableStateOf("") }
-              val scope = rememberCoroutineScope()
-
-              Column(
-                  modifier = Modifier
-                      .fillMaxSize()
-                      .padding(24.dp),
-                  verticalArrangement = Arrangement.spacedBy(14.dp),
-                  horizontalAlignment = Alignment.CenterHorizontally
-              ) {
-                  Spacer(modifier = Modifier.height(30.dp))
-
-                  Text(
-                      "SFL TURETA DATA",
-                      style = MaterialTheme.typography.headlineMedium,
-                      fontWeight = FontWeight.Bold
-                  )
-
-                  Text("Data cikin sauƙi, a kowane lokaci.")
-
-                  OutlinedTextField(
-                      value = identifier,
-                      onValueChange = { identifier = it },
-                      label = { Text("Phone Number / Email") },
-                      modifier = Modifier.fillMaxWidth()
-                  )
-
-                  OutlinedTextField(
-                      value = password,
-                      onValueChange = { password = it },
-                      label = { Text("Password") },
-                      modifier = Modifier.fillMaxWidth()
-                  )
-
-                  Button(
-                      onClick = {
-                          scope.launch {
-                              ApiClient.post(
-                                  "/auth/login",
-                                  JSONObject().apply {
-                                      put("login", identifier)
-                                      put("password", password)
-                                  }.toString()
-                              ).onSuccess { response ->
-                                  val json = JSONObject(response)
-                                  val data = json.optJSONObject("data")
-
-                                  val token =
-                                      data?.optString("access_token").orEmpty()
-
-                                  val name =
-                                      data?.optJSONObject("user")
-                                          ?.optString("full_name")
-                                          .orEmpty()
-
-                                  onLoggedIn(token, name)
-                              }.onFailure {
-                                  msg = it.message ?: "Login failed"
-                              }
-                          }
-                      },
-                      modifier = Modifier.fillMaxWidth()
-                  ) {
-                      Text("Login")
-                  }
-
-                  TextButton(
-                      onClick = onForgot
-                  ) {
-                      Text("Forgot Password?")
-                  }
-
-                  OutlinedButton(
-                      onClick = onRegister,
-                      modifier = Modifier.fillMaxWidth()
-                  ) {
-                      Text("Create Account")
-                  }
-
-                  if (msg.isNotBlank()) {
-                      Text(msg)
-                  }
-              }
-          }
-          '''
-
-          # Match LoginScreen from its declaration
-          # until the next top-level @Composable declaration.
-          pattern = r'@Composable\s+fun\s+LoginScreen\b.*?(?=\n@Composable|\Z)'
-
-          if not re.search(pattern, s, flags=re.DOTALL):
-              print("ERROR: LoginScreen block was not found")
-              raise SystemExit(1)
-
-          s = re.sub(
-              pattern,
-              login.strip(),
-              s,
-              count=1,
-              flags=re.DOTALL
-          )
-
-          # ==========================================
-          # Fix illegal weight usage
-          # ==========================================
-
-          s = re.sub(
-              r'Modifier\.weight\(1f\)\.clickable\s*\{\s*onClick\(\)\s*\}',
-              'Modifier.clickable { onClick() }',
-              s
-          )
-
-          s = s.replace(
-              'modifier.clickable',
-              'Modifier.clickable'
-          )
-
-          p.write_text(s)
-
-          print("SUCCESS: LoginScreen replaced")
-          print("SUCCESS: weight usage repaired")
-          PY
-
-      - name: Verify MainActivity
-        run: |
-          FILE=$(find extracted -name MainActivity.kt | head -1)
-
-          echo "===== MainActivity lines 90-150 ====="
-          nl -ba "$FILE" | sed -n '90,150p'
-          echo "======================================"
-
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-
-      - name: Find Android Project
-        id: android
+      - name: Extract project
+        shell: bash
         run: |
-          SETTINGS=$(find extracted \( -name settings.gradle -o -name settings.gradle.kts \) | head -1)
+          set -e
+
+          ZIP=$(find . -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: No ZIP file found"
+            exit 1
+          fi
+
+          echo "ZIP found: $ZIP"
+
+          rm -rf extracted
+          mkdir extracted
+
+          unzip -q "$ZIP" -d extracted
+
+          echo "Searching for Android project..."
+
+          SETTINGS=$(find extracted -type f -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "ERROR: settings.gradle not found"
+            echo "ERROR: settings.gradle or settings.gradle.kts not found"
+            find extracted -maxdepth 5 -type f | head -n 100
             exit 1
           fi
 
-          DIR=$(dirname "$SETTINGS")
+          PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "Android project: $DIR"
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "PROJECT_DIR=$PROJECT_DIR"
 
-      - name: Find App Gradle
-        id: app
-        working-directory: ${{ steps.android.outputs.dir }}
-        run: |
-          FILE=$(find . \( -path "*/app/build.gradle" -o -path "*/app/build.gradle.kts" \) | head -1)
+          echo "===== SETTINGS FILE ====="
+          cat "$SETTINGS"
 
-          if [ -z "$FILE" ]; then
-            echo "ERROR: app Gradle file not found"
+          echo "===== APP GRADLE FILE ====="
+
+          APP_GRADLE=$(find "$PROJECT_DIR" -type f -path "*/app/build.gradle.kts" -o -path "*/app/build.gradle" | head -n 1)
+
+          if [ -z "$APP_GRADLE" ]; then
+            echo "ERROR: app/build.gradle.kts or app/build.gradle not found"
+            find "$PROJECT_DIR" -type f | head -n 150
             exit 1
           fi
 
-          echo "Gradle file: $FILE"
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Gradle file: $APP_GRADLE"
+          echo "--------------------------------"
+          cat "$APP_GRADLE"
+          echo "--------------------------------"
 
-      - name: Configure Java 17
-        working-directory: ${{ steps.android.outputs.dir }}
-        run: |
-          FILE="${{ steps.app.outputs.file }}"
-
-          python3 - "$FILE" <<'PY'
-          from pathlib import Path
-          import sys
-
-          p = Path(sys.argv[1])
-          s = p.read_text()
-
-          if p.suffix == ".kts":
-
-              if "jvmToolchain(17)" not in s:
-                  s += """
-
-          kotlin {
-              jvmToolchain(17)
-          }
-          """
-
-              if "sourceCompatibility = JavaVersion.VERSION_17" not in s:
-                  s += """
-
-          android {
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-          }
-          """
-
-          p.write_text(s)
-          PY
-
-      - name: Build APK
-        working-directory: ${{ steps.android.outputs.dir }}
-        run: |
-          gradle assembleDebug --no-daemon --stacktrace
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: SFL-TURETA-DATA-APK
-          path: ${{ steps.android.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+          echo "===== PROJECT FILES ====="
+          find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -n 200
