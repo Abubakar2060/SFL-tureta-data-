@@ -81,14 +81,10 @@ jobs:
           set -e
 
           cd "$PROJECT_DIR"
-
-          cat > /tmp/jvm-fix.gradle <<'EOF'
-          allprojects {
-            tasks.withType(JavaCompile).configureEach {
-              options.release.set(17)
-            }
-          }
-          EOF
+allprojects {
+  tasks.withType(JavaCompile).configureEach {
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
 
           /tmp/gradle-8.9/bin/gradle \
             --no-daemon \
