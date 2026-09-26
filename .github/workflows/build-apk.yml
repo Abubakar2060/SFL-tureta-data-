@@ -45,7 +45,6 @@ jobs:
 
           if [ -z "$SETTINGS" ]; then
             echo "ERROR: settings.gradle file not found"
-            find extracted -maxdepth 4 -type f | head -100
             exit 1
           fi
 
@@ -75,16 +74,24 @@ jobs:
 
           /tmp/gradle-8.9/bin/gradle --version
 
+      - name: Create JVM fix
+        shell: bash
+        run: |
+          cat > /tmp/jvm-fix.gradle <<'EOF'
+          allprojects {
+            tasks.withType(JavaCompile).configureEach {
+              sourceCompatibility = "17"
+              targetCompatibility = "17"
+            }
+          }
+          EOF
+
       - name: Build Debug APK
         shell: bash
         run: |
           set -e
 
           cd "$PROJECT_DIR"
-allprojects {
-  tasks.withType(JavaCompile).configureEach {
-    sourceCompatibility = "17"
-    targetCompatibility = "17"
 
           /tmp/gradle-8.9/bin/gradle \
             --no-daemon \
