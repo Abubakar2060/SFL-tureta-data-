@@ -76,14 +76,89 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          gradle wrapper --gradle-version 8.9
+          
 
-          chmod +x gradlew
+        gradle wrapper --gradle-version 8.9
 
-          ./gradlew \
-            --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx3g" \
-            assembleDebug
+
+            echo "===== FIX JVM TARGET ====="
+
+            cat > /tmp/fix-jvm.gradle <<'EOF'
+allprojects {
+    tasks.withType(JavaCompile).configureEach {
+        sourceCompatibility = "17"
+        targetCompatibility = "17"
+    }
+
+    tasks.matching {
+        it.name.startsWith("compile") && it.name.endsWith("Kotlin")
+    }.configureEach {
+        try {
+            kotlinOptions.jvmTarget = "17"
+        } catch (Exception ignored) {
+        }
+    }
+}
+EOF
+
+            ./gradlew \
+              --no-daemon \
+              -Dorg.gradle.jvmargs="-Xmx3g" \
+              -I /tmp/fix-jvm.gradle \
+              assembleDebug
+python3 - <<'PY'
+from pathlib import Path
+
+settings = list(Path(".").rglob("settings.gradle.kts")) + list(Path(".").rglob("settings.gradle"))
+
+if not settings:
+    raise SystemExit("settings.gradle not found")
+
+project = settings[0].parent
+gradle_file = project / "app" / "build.gradle.kts"
+
+if not gradle_file.exists():
+    raise SystemExit(f"Missing: {gradle_file}")
+
+text = gradle_file.read_text()
+
+if "sourceCompatibility = JavaVersion.VERSION_17" not in text:
+    marker = "android {"
+    if marker not in text:
+        raise SystemExit("android block not found")
+
+    replacement = """android {
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+"""
+    text = text.replace(marker, replacement, 1)
+
+if 'kotlinOptions.jvmTarget = "17"' not in text:
+    marker = "android {"
+    insert = """android {
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+"""
+    text = text.replace(marker, insert, 1)
+
+gradle_file.write_text(text)
+
+print("===== UPDATED BUILD.GRADLE.KTS =====")
+print(gradle_file.read_text())
+PY
+
+./gradlew \
+  --no-daemon \
+  -Dorg.gradle.jvmargs="-Xmx3g" \
+  assembleDebug
+
+        
+            
+          
+            
 
       - name: Find APK
         shell: bash
