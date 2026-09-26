@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -20,7 +20,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Extract ZIP
+      - name: Find and extract Android project
         shell: bash
         run: |
           set -e
@@ -28,111 +28,90 @@ jobs:
           ZIP=$(find . -type f -name "*.zip" | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "ZIP file not found"
+            echo "ERROR: ZIP file not found"
             exit 1
           fi
+
+          echo "ZIP found: $ZIP"
 
           rm -rf extracted
-          mkdir extracted
+          mkdir -p extracted
+
           unzip -q "$ZIP" -d extracted
 
-          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
+          SETTINGS=$(find extracted -type f \
+            \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
+            | head -n 1)
 
           if [ -z "$SETTINGS" ]; then
-            echo "settings.gradle not found"
+            echo "ERROR: settings.gradle file not found"
+            find extracted -maxdepth 4 -type f | head -100
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$SETTINGS")
 
-          echo "PROJECT: $PROJECT_DIR"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Inspect MainActivity
+          echo "Android project:"
+          echo "$PROJECT_DIR"
+
+      - name: Show project files
+        shell: bash
+        run: |
+          echo "Project directory: $PROJECT_DIR"
+          find "$PROJECT_DIR" -maxdepth 3 -type f | sort | head -150
+
+      - name: Install Gradle 8.9
         shell: bash
         run: |
           set -e
 
-          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
-          PROJECT_DIR=$(dirname "$SETTINGS")
+          curl -fsSL \
+            -o /tmp/gradle.zip \
+            https://services.gradle.org/distributions/gradle-8.9-bin.zip
 
-          MAIN=$(find "$PROJECT_DIR" -type f -name "MainActivity.kt" | head -n 1)
+          unzip -q /tmp/gradle.zip -d /tmp
 
-          echo "===== MAIN ACTIVITY ====="
-          echo "$MAIN"
+          /tmp/gradle-8.9/bin/gradle --version
 
-          echo "===== LINES 95-145 ====="
-          nl -ba "$MAIN" | sed -n '95,145p'
-
-      - name: Build APK
+      - name: Build Debug APK
         shell: bash
         run: |
           set -e
-
-          SETTINGS=$(find extracted -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) | head -n 1)
-          PROJECT_DIR=$(dirname "$SETTINGS")
 
           cd "$PROJECT_DIR"
 
-          echo "===== PROJECT ====="
-          pwd
+          cat > /tmp/jvm-fix.gradle <<'EOF'
+          allprojects {
+            tasks.withType(JavaCompile).configureEach {
+              options.release.set(17)
+            }
+          }
+          EOF
 
-          echo "===== FIX JVM TARGET ====="
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          gradle_file = Path("app/build.gradle.kts")
-
-          if not gradle_file.exists():
-              raise SystemExit("app/build.gradle.kts not found")
-
-          text = gradle_file.read_text()
-
-          if "sourceCompatibility = JavaVersion.VERSION_17" not in text:
-              text = text.replace(
-                  "android {",
-                  """android {
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = "17"
-              }""",
-                  1
-              )
-
-          gradle_file.write_text(text)
-
-          print("===== UPDATED BUILD FILE =====")
-          print(gradle_file.read_text())
-          PY
-
-          echo "===== GRADLE VERSION ====="
-          gradle --version
-
-          echo "===== CREATE GRADLE WRAPPER ====="
-          gradle wrapper --gradle-version 8.9
-
-          chmod +x gradlew
-
-          echo "===== BUILD APK ====="
-
-          ./gradlew \
+          /tmp/gradle-8.9/bin/gradle \
             --no-daemon \
+            --stacktrace \
+            --console=plain \
+            -I /tmp/jvm-fix.gradle \
             -Dorg.gradle.jvmargs="-Xmx3g" \
             assembleDebug
 
       - name: Find APK
         shell: bash
         run: |
-          echo "===== APK FILES ====="
-          find extracted -type f -name "*.apk" -print
+          echo "Searching for APK..."
+
+          find "$PROJECT_DIR" \
+            -type f \
+            -name "*.apk" \
+            -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SFL-TURETA-DATA-APK
-          path: extracted/**/*.apk
+          path: |
+            **/build/outputs/apk/debug/*.apk
           if-no-files-found: error
