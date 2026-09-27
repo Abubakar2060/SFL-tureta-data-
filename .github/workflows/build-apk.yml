@@ -74,14 +74,22 @@ jobs:
 
           /tmp/gradle-8.9/bin/gradle --version
 
-      - name: Create JVM fix
+      - name: Apply JVM 17 compatibility
         shell: bash
         run: |
+          set -e
+
           cat > /tmp/jvm-fix.gradle <<'EOF'
           allprojects {
             tasks.withType(JavaCompile).configureEach {
-              sourceCompatibility = "17"
-              targetCompatibility = "17"
+              sourceCompatibility = JavaVersion.VERSION_17
+              targetCompatibility = JavaVersion.VERSION_17
+            }
+
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+              kotlinOptions {
+                jvmTarget = "17"
+              }
             }
           }
           EOF
